@@ -1,0 +1,43 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createApp} from '../server.mjs';
+test('initial admin, staff provisioning, login isolation, logout-all, password change and persistence',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'carebridge-auth-'));let server;
+ try{
+  server=await createApp({dataDir:dir});await new Promise(r=>server.listen(0,'127.0.0.1',r));let base='http://127.0.0.1:'+server.address().port;
+  const request=(path,b,cookie)=>fetch(base+'/api/'+path,{method:b?'POST':'GET',headers:{Origin:base,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},body:b?JSON.stringify(b):undefined});
+  const login=async(username,password)=>{const r=await request('login',{username,password});assert.equal(r.status,200);return r.headers.get('set-cookie').split(';')[0];};
+  assert.equal((await(await request('setup-status')).json()).configured,false);
+  const pass='Test-account-password-2026!';
+  assert.equal((await request('setup',{username:'manager',name:'운영자',password:pass})).status,201);
+  assert.equal((await request('setup',{username:'another',name:'재설정',password:pass})).status,409);
+  assert.equal((await request('accounts')).status,401);
+  const admin=await login('manager',pass);
+  assert.equal((await request('accounts',{slot:'writer',username:'author',name:'작성자',password:pass},admin)).status,201);
+  assert.equal((await request('accounts',{slot:'social',username:'author',name:'중복 아이디',password:pass},admin)).status,409);
+  assert.equal((await request('login',{username:'author',password:'wrong'})).status,401);
+  const first=await login('author',pass),second=await login('author',pass);
+  assert.equal((await request('accounts',null,first)).status,403);
+  assert.equal((await request('accounts',{slot:'social',username:'rogue',name:'권한 확대',password:pass},first)).status,403);
+  assert.equal((await request('logout',{},first)).status,200);
+  assert.equal((await request('me',null,first)).status,401);
+  assert.equal((await request('me',null,second)).status,200);
+  const third=await login('author',pass);
+  assert.equal((await request('logout-all',{},second)).status,200);
+  assert.equal((await request('me',null,third)).status,401);
+  const fourth=await login('author',pass),newPassword='Changed-test-password-2026!';
+  assert.equal((await request('password',{currentPassword:'wrong',password:newPassword},fourth)).status,400);
+  assert.equal((await request('password',{currentPassword:pass,password:newPassword},fourth)).status,200);
+  assert.equal((await request('me',null,fourth)).status,401);
+  assert.equal((await request('login',{username:'author',password:pass})).status,401);
+  const fifth=await login('author',newPassword);
+  assert.equal((await request('me',null,fifth)).status,200);
+  const stored=readFileSync(join(dir,'accounts.json'),'utf8');assert.equal(stored.includes(pass),false);assert.equal(stored.includes(newPassword),false);assert.match(stored,/scrypt\$/);
+  const staffList=await(await request('accounts',null,admin)).json();assert.equal(JSON.stringify(staffList).includes('passwordHash'),false);
+  await new Promise(r=>server.close(r));server=await createApp({dataDir:dir});await new Promise(r=>server.listen(0,'127.0.0.1',r));base='http://127.0.0.1:'+server.address().port;
+  assert.equal((await request('me',null,fifth)).status,401);await login('author',newPassword);
+ }finally{if(server?.listening)await new Promise(r=>server.close(r));rmSync(dir,{recursive:true,force:true});}
+});

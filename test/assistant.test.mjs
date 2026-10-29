@@ -1,0 +1,42 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createApp} from '../server.mjs';
+import {fixture,createNote} from '../domain.mjs';
+test('chat tools enforce access, preview, single execution, version checks, reassignment and confirmation',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'carebridge-chat-'));let server;
+ try{
+  const pass='Only-test-password-2026!';
+  const own=createNote({source:'fake',language:'en',caseId:'DEMO-A',assignee:'social'},fixture(),{id:'writer',name:'작성자'},'example');
+  const other=createNote({source:'secret-other-record',language:'en',caseId:'DEMO-B',assignee:'reviewer'},fixture(),{id:'writer',name:'작성자'},'example');
+  writeFileSync(join(dir,'notes.json'),JSON.stringify([own,other]));
+  server=await createApp({dataDir:dir,chatPlanner:async()=>({action:'list',query:''})});await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
+  const req=async(path,b,cookie)=>{const r=await fetch(base+'/api/'+path,{method:b?'POST':'GET',headers:{Origin:base,'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{})},body:b?JSON.stringify(b):undefined});return {status:r.status,data:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]};};
+  await req('setup',{username:'manager',name:'관리자',password:pass});const admin=(await req('login',{username:'manager',password:pass})).cookie;
+  for(const slot of ['writer','social','reviewer'])await req('accounts',{slot,username:slot,name:slot,password:pass},admin);
+  const social=(await req('login',{username:'social',password:pass})).cookie,care=(await req('login',{username:'reviewer',password:pass})).cookie,writer=(await req('login',{username:'writer',password:pass})).cookie;
+  const chat=(message,extra={},cookie=social)=>req('assistant',{message,...extra},cookie);
+  assert.equal((await chat('목록',{},writer)).status,403);assert.equal((await chat('목록',{},admin)).status,403);
+  const list=await chat('받은 기록 보여줘');assert.equal(list.data.records.length,1);assert.equal(list.data.records[0].id,own.id);
+  assert.equal((await chat('열어줘',{selectedNoteId:other.id})).data.noteId,undefined);
+  assert.equal((await chat('1번 열어줘')).data.noteId,own.id);
+  let p=(await chat('이 기록 검토 시작')).data.proposal;assert.ok(p);assert.equal((await req('notes',null,social)).data.notes[0].status,'pending');
+  assert.equal((await chat('실행',{proposalId:p.id})).data.changed,true);assert.equal((await chat('실행')).status,409);
+  p=(await chat('수정 요청, 사유: 시간 확인')).data.proposal;await chat('취소');assert.equal((await chat('실행')).status,409);
+  p=(await chat('수정 요청, 사유: 시간 확인')).data.proposal;
+  await req('notes/'+own.id,{action:'revision',version:2,comment:'다른 화면 변경'},social);
+  assert.equal((await chat('실행',{proposalId:p.id})).status,409);
+  p=(await chat('재배정, 담당: 돌봄, 사유: 돌봄 확인')).data.proposal;assert.ok(p);
+  assert.equal((await chat('실행',{proposalId:p.id},care)).status,409);
+  await chat('실행',{proposalId:p.id});assert.equal((await req('notes',null,social)).data.notes.length,0);
+  p=(await chat('검토 시작',{selectedNoteId:own.id},care)).data.proposal;await chat('실행',{proposalId:p.id},care);
+  p=(await chat('확정\n기록: 검토 완료한 가상 기록\n의견: 원문 확인',{selectedNoteId:own.id},care)).data.proposal;
+  assert.ok((await chat('실행',{proposalId:p.id},care)).data.proposal);
+  await chat('원문 확인 완료 실행',{proposalId:p.id},care);
+  assert.equal((await req('notes',null,care)).data.notes.find(n=>n.id===own.id).status,'confirmed');
+  assert.ok((await chat('알아서 찾아 봐',{},care)).data.records);
+  await req('logout',{},care);assert.equal((await chat('목록',{},care)).status,401);
+ }finally{if(server?.listening)await new Promise(r=>server.close(r));rmSync(dir,{recursive:true,force:true});}
+});
