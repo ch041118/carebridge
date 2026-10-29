@@ -20,11 +20,11 @@ export async function createApp({dataDir=resolve(root,'data'),translator=transla
  const save=next=>{writeFileSync(file+'.tmp',JSON.stringify(next,null,2),{mode:0o600});renameSync(file+'.tmp',file);notes=next;};
  const commit=(id,body,user)=>{
   const next=structuredClone(notes),note=next.find(n=>n.id===id);
-  if(!note||!visible(note,user)||user.role!=='reviewer')throw fail('열람 가능한 담당 기록이 아닙니다.',403);
+  if(!note||!visible(note,user)||!['reviewer','admin'].includes(user.role))throw fail('열람 가능한 담당 기록이 아닙니다.',403);
   if(body.version!==note.version)throw fail('기록이 변경됐습니다. 다시 열고 요청해 주세요.',409);
   if(body.action==='reassign'){
    const staff=accounts.staff();
-   if(note.status==='confirmed')throw fail('확정 기록은 재배정할 수 없습니다.',409);
+   if(!['pending','reviewing','revision'].includes(note.status))throw fail('전달된 미확정 기록만 재배정할 수 있습니다.',409);
    if(!staff.some(s=>s.id===body.assignee)||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>1000)throw fail('담당자와 사유를 확인해 주세요.');
    note.assignee=body.assignee;note.routeReason='담당자 재배정: '+body.reason.trim();note.status='pending';note.version++;
    note.history.push({at:new Date().toISOString(),actor:user.name,event:'담당자 재배정',version:note.version,comment:body.reason+' → '+staff.find(s=>s.id===body.assignee).name});
@@ -59,13 +59,13 @@ export async function createApp({dataDir=resolve(root,'data'),translator=transla
     if(url.pathname==='/api/me')return json(200,{user,aiConfigured:Boolean(process.env.OLLAMA_MODEL)});
     if(url.pathname==='/api/notes'&&req.method==='GET')return json(200,{notes:notes.filter(n=>visible(n,user))});
     if(url.pathname==='/api/notes'&&req.method==='POST'){
-     if(user.role!=='writer')throw fail('작성자 계정에서 입력해 주세요.',403);const input={...validateInput(body),...routing(body)};if(!staff.some(s=>s.id===input.assignee))throw fail('관리자가 먼저 해당 업무 담당자 계정을 등록해야 합니다.',409);
+     if(!['writer','admin'].includes(user.role))throw fail('작성자 계정에서 입력해 주세요.',403);const input={...validateInput(body),...routing(body)};if(user.role==='admin'&&!staff.some(s=>s.id===input.assignee)){input.assignee=user.id;input.routeReason='관리자 통합 테스트 · 미등록 담당 업무를 관리자에게 배정';}if(!staff.some(s=>s.id===input.assignee))throw fail('관리자가 먼저 해당 업무 담당자 계정을 등록해야 합니다.',409);
      if(body.demo===true&&(input.source!==example||input.language!=='en'))throw fail('예시 체험은 제공된 영어 메모만 사용할 수 있습니다.');
      const draft=body.demo===true?fixture():await translator(input.source,input.language);if(!accounts.actor(token))throw fail('로그인이 만료됐습니다. 메모를 다시 제출해 주세요.',401);const note=createNote(input,draft,user,body.demo===true?'example':'ai');
      if(body.demo===true){draft.authorSummary=example;draft.followups=[{ko:'식사량이 적었다는 뜻인가요, 먹는 데 어려움이 있었다는 뜻인가요?',native:'Do you mean a smaller amount was eaten, or that eating was difficult?'},{ko:'관찰 시점과 이후 조치를 아는 범위에서 알려 주세요.',native:'When was this observed and what action followed? Select unknown if unsure.'}];}
      note.clarifications=questions(draft);note.status=note.clarifications.length?'clarifying':'ready';save([...notes,note]);return json(201,{note});
     }
-    const m=/^\/api\/notes\/([a-f0-9-]+)$/.exec(url.pathname);if(m&&req.method==='POST'){if(user.role==='reviewer'&&['review','revision','confirm','reassign'].includes(body.action))return json(200,{note:commit(m[1],body,user)});const next=structuredClone(notes),note=next.find(n=>n.id===m[1]);if(!note)throw fail('기록을 찾을 수 없습니다.',404);if(!visible(note,user))throw fail('열람 권한이 없습니다.',403);
+    const m=/^\/api\/notes\/([a-f0-9-]+)$/.exec(url.pathname);if(m&&req.method==='POST'){if(['reviewer','admin'].includes(user.role)&&['review','revision','confirm','reassign'].includes(body.action))return json(200,{note:commit(m[1],body,user)});const next=structuredClone(notes),note=next.find(n=>n.id===m[1]);if(!note)throw fail('기록을 찾을 수 없습니다.',404);if(!visible(note,user))throw fail('열람 권한이 없습니다.',403);
      if(body.action==='answer'){
       const answers=answerInput(note,body,user),combined=note.source+'\n\n'+answers.map(q=>'Question: '+q.native+'\nAnswer: '+(q.unknown?'Unknown / not observed':q.answer)).join('\n');
       const updated=note.mode==='example'?{...note.draft,followups:[],authorSummary:combined}:await translator(combined,note.language);
@@ -79,7 +79,7 @@ export async function createApp({dataDir=resolve(root,'data'),translator=transla
      }
      if(body.action==='handoff')handoff(note,body,user);
      else if(body.action==='reassign'){
-      if(user.role!=='reviewer'||note.status==='confirmed'||body.version!==note.version)throw fail('재배정할 수 없는 상태입니다.',409);
+      if(!['reviewer','admin'].includes(user.role)||note.status==='confirmed'||body.version!==note.version)throw fail('재배정할 수 없는 상태입니다.',409);
       if(!staff.some(s=>s.id===body.assignee)||typeof body.reason!=='string'||!body.reason.trim()||body.reason.length>1000)throw fail('담당자와 재배정 사유를 입력해 주세요.');
       note.assignee=body.assignee;note.routeReason='담당자 재배정: '+body.reason.trim();note.status='pending';note.version++;note.history.push({at:new Date().toISOString(),actor:user.name,event:'담당자 재배정',version:note.version,comment:body.reason+' → '+staff.find(s=>s.id===body.assignee).name});
      }else transition(note,body,user);save(next);return json(200,{note});}

@@ -18,7 +18,7 @@ export async function accountsService(dataDir,initialAccounts=[]){
  return {
   configured:()=>accounts.length>0,
   list(user){admin(user);return accounts.map(publicAccount);},
-  staff:()=>accounts.filter(a=>a.role==='reviewer').map(publicAccount),
+  staff:()=>accounts.filter(a=>a.role==='reviewer'||a.role==='admin').map(publicAccount),
   async setup(b,ip){limit('setup:'+ip,5);if(accounts.length)throw fail('초기 설정이 이미 완료됐습니다.',409);return create(b,'admin');},
   async create(b,user){admin(user);return create(b,b.slot);},
   async login(b,ip){limit('login:'+ip);const username=typeof b.username==='string'?b.username.toLowerCase():'';const a=accounts.find(a=>a.username===username);if(!a||!await verifyPassword(b.password,a.passwordHash))throw fail('아이디 또는 비밀번호가 올바르지 않습니다.',401);const token=randomBytes(32).toString('hex'),until=Date.now()+8*3600000;for(const[k,v]of sessions)if(v.until<=Date.now())sessions.delete(k);sessions.set(digest(token),{id:a.id,until});return {token,user:publicAccount(a)};},

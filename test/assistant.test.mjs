@@ -18,7 +18,7 @@ test('chat tools enforce access, preview, single execution, version checks, reas
   for(const slot of ['writer','social','reviewer'])await req('accounts',{slot,username:slot,name:slot,password:pass},admin);
   const social=(await req('login',{username:'social',password:pass})).cookie,care=(await req('login',{username:'reviewer',password:pass})).cookie,writer=(await req('login',{username:'writer',password:pass})).cookie;
   const chat=(message,extra={},cookie=social)=>req('assistant',{message,...extra},cookie);
-  assert.equal((await chat('목록',{},writer)).status,403);assert.equal((await chat('목록',{},admin)).status,403);
+  assert.equal((await chat('목록',{},writer)).status,403);assert.equal((await chat('목록',{},admin)).status,200);
   const list=await chat('받은 기록 보여줘');assert.equal(list.data.records.length,1);assert.equal(list.data.records[0].id,own.id);
   assert.equal((await chat('열어줘',{selectedNoteId:other.id})).data.noteId,undefined);
   assert.equal((await chat('1번 열어줘')).data.noteId,own.id);

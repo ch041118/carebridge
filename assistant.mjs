@@ -11,7 +11,7 @@ export function assistantService({getNotes,getStaff,commit,planner=planChat}){
  const sessions=new Map();
  const help='가능한 요청: 받은 기록 보여줘 / 대기 기록 / 검색 식비 / 1번 열어줘 / 이 기록 검토 시작 / 이 기록 수정 요청, 사유: 식사량 확인 / 이 기록 재배정, 담당: 돌봄, 사유: 일상 돌봄 확인. 확정은 「확정\n기록: 최종 기록 내용\n의견: 검토 의견」으로 입력하세요. 변경 전 제안 내용을 확인한 뒤 실행 또는 취소할 수 있습니다. 삭제·외부 전송·진단은 지원하지 않습니다.';
  return async function chat({body,user,token,active}){
-  if(user.role!=='reviewer')throw fail('담당자 계정에서만 채팅 도구를 사용할 수 있습니다.',403);
+  if(!['reviewer','admin'].includes(user.role))throw fail('담당자 계정에서만 채팅 도구를 사용할 수 있습니다.',403);
   if(typeof body.message!=='string'||!body.message.trim()||body.message.length>4000)throw fail('요청을 1~4000자로 입력해 주세요.');
   const now=Date.now();for(const [k,v] of sessions)if(v.expires<now)sessions.delete(k);
   let s=sessions.get(token);if(!s){if(sessions.size>=1000)throw fail('잠시 후 다시 시도해 주세요.',429);s={ids:[],selected:null,expires:now+1800000};sessions.set(token,s);}

@@ -27,13 +27,13 @@ export function transition(note,b,user){
  if(b.version!==note.version)throw fail('다른 변경이 있습니다. 목록을 새로고침한 뒤 다시 확인해 주세요.',409);
  if(note.status==='confirmed')throw fail('확정 기록은 변경할 수 없습니다.',409);
  if(b.action==='resubmit'){
-  if(user.role!=='writer'||user.id!==note.author)throw fail('작성자만 보완할 수 있습니다.',403);
+  if(user.role!=='admin'&&(user.role!=='writer'||user.id!==note.author))throw fail('작성자만 보완할 수 있습니다.',403);
   if(note.status!=='revision')throw fail('수정 요청된 기록만 보완할 수 있습니다.',409);
   if(typeof b.supplement!=='string'||!b.supplement.trim()||b.supplement.length>2000)throw fail('보완 내용을 입력해 주세요.');
   validateInput({source:b.supplement,language:note.language,privacy:b.privacy});
   note.supplements||=[];note.supplements.push(b.supplement.trim());note.status='pending';
  }else{
-  if(user.role!=='reviewer')throw fail('담당자만 검토할 수 있습니다.',403);
+  if(!['reviewer','admin'].includes(user.role))throw fail('담당자만 검토할 수 있습니다.',403);
   if(!['review','revision','confirm'].includes(b.action))throw fail('알 수 없는 작업입니다.');
   if(b.action==='review'){if(note.status!=='pending')throw fail('검토 대기 기록만 시작할 수 있습니다.',409);note.status='reviewing';}
   else{
