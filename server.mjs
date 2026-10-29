@@ -11,7 +11,9 @@ import {example,fixture,validateInput,createNote,transition,fail} from './domain
 import {translate} from './ai.mjs';
 import {assistantService} from './assistant.mjs';
 const root=dirname(fileURLToPath(import.meta.url));
-export async function createApp({dataDir=resolve(root,'data'),translator=translate,initialAccounts=[],chatPlanner}={}){
+export async function createApp({dataDir=resolve(root,'data'),translator=translate,initialAccounts=[],chatPlanner,publicOrigin=''}={}){
+ const external=publicOrigin?new URL(publicOrigin):null;
+ if(external&&(external.protocol!=='https:'||external.origin!==publicOrigin||external.username||external.password))throw Error('Public origin must be an exact HTTPS origin.');
  mkdirSync(dataDir,{recursive:true});const release=lockDataDirectory(dataDir),file=resolve(dataDir,'notes.json');
  let notes=existsSync(file)?JSON.parse(readFileSync(file,'utf8')):[];
  const accounts=await accountsService(dataDir,initialAccounts);
@@ -34,15 +36,16 @@ export async function createApp({dataDir=resolve(root,'data'),translator=transla
   const json=(code,body)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(body));};
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'");
   try{
-   const host=req.headers.host;if(!/^(127\.0\.0\.1|localhost):\d+$/.test(host||''))throw fail('허용되지 않은 주소입니다.',403);
+   const host=req.headers.host;if(external?host!==external.host:!/^(127\.0\.0\.1|localhost):\d+$/.test(host||''))throw fail('허용되지 않은 주소입니다.',403);
    const url=new URL(req.url,'http://'+host);
-   if(req.method!=='GET'&&req.headers.origin!==`http://${host}`)throw fail('동일한 앱 화면에서 요청해 주세요.',403);
+   if(req.method!=='GET'&&req.headers.origin!==(external?external.origin:`http://${host}`))throw fail('동일한 앱 화면에서 요청해 주세요.',403);
+   if(external&&url.pathname==='/api/setup')throw fail('외부 시연에서는 초기 설정을 사용할 수 없습니다.',403);
    let body={};if(req.method==='POST'){if(!req.headers['content-type']?.startsWith('application/json'))throw fail('JSON 요청이 필요합니다.',415);let text='';for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>64000)throw fail('요청이 너무 큽니다.',413);}try{body=JSON.parse(text);}catch{throw fail('잘못된 요청입니다.');}}
    if(url.pathname==='/api/health'&&req.method==='GET')return json(200,{app:'carebridge',version:'0.2.0'});
    if(url.pathname==='/api/setup-status'&&req.method==='GET')return json(200,{configured:accounts.configured()});
    if(url.pathname==='/api/setup'&&req.method==='POST')return json(201,{user:await accounts.setup(body,req.socket.remoteAddress)});
    if(url.pathname==='/api/login'&&req.method==='POST'){
-    const result=await accounts.login(body,req.socket.remoteAddress);res.setHeader('Set-Cookie',`carebridge=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`);return json(200,{user:result.user});
+    const result=await accounts.login(body,req.socket.remoteAddress);res.setHeader('Set-Cookie',`carebridge=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${external?'; Secure':''}`);return json(200,{user:result.user});
    }
    if(url.pathname.startsWith('/api/')){
     const token=/carebridge=([a-f0-9]{64})/.exec(req.headers.cookie||'')?.[1],user=accounts.actor(token);if(!user)throw fail('로그인이 만료되었습니다. 다시 로그인해 주세요.',401);
